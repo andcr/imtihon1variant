@@ -1,45 +1,119 @@
-from telegram import Update
-from telegram import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
-import wikipedia
-import smtplib
-from email.mime.text import MIMEText
+from telebot import CancelUpdate
+from atbot import TelegramMessage
+import telebot, wikipedia, re
+from sklearn.feature_extraction.text import CountVectorizer
+from sklearn.linear_model import LogisticRegression
+from time import timezone
+import result
+bot = telebot.TeleBot('5754196545:AAH-iJtTHHFhdq5BnVqKhVPSzbx_H9zVa5o')
 
-def start(update: Update, context: CallbackContext) -> None:
-    update.message.reply_text('Assalomu alaykum! Wikipedia ma\'lumotlarini olish uchun /get_info buyrug\'ini yuboring.')
+wikipedia.set_lang("ru")
 
-def get_info(update: Update, context: CallbackContext) -> None:
-    query = context.args
-    if not query:
-        update.message.reply_text('Iltimos, qidiruv so\'rozini yuboring. Masalan: /get_info Car')
-    else:
-        result = wikipedia.summary(" ".join(query), sentences=2)
-        send_email("mamajonovibrokhimjon@gmail.com", "Wikipedia Info", result)
-        update.message.reply_text('Ma\'lumot jo\'natildi.')
 
-def send_email(to_address, subject, body):
-    smtp_server = "smtp.example.com"
-    smtp_port = 587
-    smtp_username = "fatxullohibrohim@gmail.com"
-    smtp_password = "ismoil_999"
-    msg = MIMEText(body)
-    msg['Subject'] = subject
-    msg['From'] = smtp_username
-    msg['To'] = to_address
+def clean_str(r):
+	r = r.lower()
+	r = [c for c in r if c in alphabet]
+	return ''.join(r)
 
-    with smtplib.SMTP(smtp_server, smtp_port) as server:
-        server.starttls()
-        server.login(smtp_username, smtp_password)
-        server.sendmail(smtp_username, to_address, msg.as_string())
 
-def main() -> None:
-    updater = Updater("5754196545:AAH-iJtTHHFhdq5BnVqKhVPSzbx_H9zVa5o")
-    dispatcher = updater.dispatcher
+alphabet = ' 1234567890-йцукенгшщзхъфывапролджэячсмитьбюёqwertyuiopasdfghjklzxcvbnm?%.,()!:;'
 
-    dispatcher.add_handler(CommandHandler("start", start))
-    dispatcher.add_handler(CommandHandler("get_info", get_info))
 
-    updater.start_polling()
-    updater.idle()
+def update():
+	with open('dialogues.txt', encoding='utf-8') as f:
+		content = f.read()
 
-if __name__ == '__main__':
-    main()
+	blocks = content.split('\n')
+	dataset = []
+
+	for block in blocks:
+		replicas = block.split('\\')[:2]
+		if len(replicas) == 2:
+			pair = [clean_str(replicas[0]), clean_str(replicas[1])]
+			if pair[0] and pair[1]:
+				dataset.append(pair)
+
+	X_text = []
+	y = []
+
+	for question, answer in dataset[:10000]:
+		X_text.append(question)
+		y += [answer]
+
+	global vectorizer
+	vectorizer = CountVectorizer()
+	X = vectorizer.fit_transform(X_text)
+
+	global clf
+	clf = LogisticRegression()
+	clf.fit(X, y)
+
+
+update()
+
+@bot.message_handler(func=lambda message: True)
+def echo_all(message):
+    text = message.text
+    chat_id = message.chat.id
+
+    print(chat_id, message.from_user.username, text)
+def get_generative_replica(text):
+	text_vector = vectorizer.transform([text]).toarray()[0]
+	question = clf.predict([text_vector])[0]
+	return question
+
+
+def getwiki(s):
+	try:
+		ny = wikipedia.page(s)
+		wikitext = ny.content[:1000]
+		wikimas = wikitext.split('.')
+		wikimas = wikimas[:-1]
+		wikitext2 = ''
+		for x in wikimas:
+			if not ('==' in x):
+				if (len((x.strip())) > 3):
+					wikitext2 = wikitext2 + x + '.'
+			else:
+				break
+		wikitext2 = re.sub('\([^()]*\)', '', wikitext2)
+		wikitext2 = re.sub('\([^()]*\)', '', wikitext2)
+		wikitext2 = re.sub('\{[^\{\}]*\}', '', wikitext2)
+		return wikitext2
+	except Exception as e:
+		return 'В энциклопедии нет информации об этом'
+
+
+@bot.message_handler(commands=['start'])
+def start_message(message):
+	bot.send_message(message.chat.id, "Здравствуйте, Сэр.")
+
+
+question = ""
+
+
+@bot.message_handler(content_types=['text'])
+def get_text_messages(message):
+	command = message.text.lower()
+	if command == "не так":
+		bot.send_message(message.from_user.id, "а как?")
+		bot.register_next_step_handler(message, wrong)
+	else:
+		global question
+		question = command
+		reply = get_generative_replica(command)
+		if reply == "вики ":
+			bot.send_message(message.from_user.id, getwiki(command))
+		else:
+			bot.send_message(message.from_user.id, reply)
+
+
+def wrong(message):
+	a = f"{question}{message.text.lower()} \n"
+	with open('dialogues.txt', "a", encoding='utf-8') as f:
+		f.write(a)
+	bot.send_message(message.from_user.id, "Готово")
+	update()
+
+
+
